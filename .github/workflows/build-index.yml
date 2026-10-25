@@ -1,0 +1,43 @@
+name: Build library index
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-index
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build slim index
+        run: python3 scripts/build_index.py
+
+      - name: Publish to data branch (single commit)
+        run: |
+          set -euo pipefail
+          NEW_HASH=$(python3 -c "import json;print(json.load(open('out/meta.json'))['hash'])")
+          OLD_HASH=$(curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/data/meta.json" 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin).get('hash',''))" 2>/dev/null || echo "")
+          if [ "$NEW_HASH" = "$OLD_HASH" ] && [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            echo "Index unchanged ($NEW_HASH), skipping publish."
+            exit 0
+          fi
+          cd out
+          git init -q
+          git checkout -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add libraries.json.gz meta.json
+          git commit -q -m "Library index $NEW_HASH"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" data
+          echo "Published $NEW_HASH"
